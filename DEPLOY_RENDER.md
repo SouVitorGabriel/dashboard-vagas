@@ -22,6 +22,8 @@ Este projeto ja esta preparado para deploy no Render usando o arquivo render.yam
 3. Conecte sua conta GitHub e selecione o repositorio.
 4. O Render detectara o arquivo render.yaml automaticamente.
 5. Confirme a criacao do servico web.
+6. Observacao: nessa tela inicial do Blueprint o Render pode NAO pedir o GITHUB_TOKEN.
+7. Depois que o servico for criado, abra o servico e va em Environment para preencher o token.
 
 ## 4) Variaveis de ambiente obrigatorias/recomendadas
 
@@ -32,6 +34,14 @@ Configure no servico Render em Environment:
    - Com token, o dashboard fica mais estavel para coleta.
 2. STREAMLIT_BROWSER_GATHER_USAGE_STATS=false (ja definido no blueprint)
 3. PYTHON_VERSION=3.12.6 (ja definido no blueprint)
+
+Passo a passo rapido no Render apos criar o servico:
+
+1. Abra o servico pi4-vagas-dashboard.
+2. Clique em Environment.
+3. Em Secret Files & Environment Variables, adicione GITHUB_TOKEN.
+4. Salve as alteracoes.
+5. Clique em Manual Deploy (ou aguarde Auto Deploy) para reiniciar com a nova variavel.
 
 ## 5) Comandos usados no Render
 
