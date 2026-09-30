@@ -249,35 +249,35 @@ def tech_frequency(df: pd.DataFrame) -> pd.DataFrame:
 
 def hard_signal_overview(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["signal", "rate", "count", "definition"])
+        return pd.DataFrame(columns=["sinal", "taxa", "quantidade", "definicao"])
 
     rows = [
         {
-            "signal": "Exige ingles",
-            "rate": df["requires_english"].mean(),
-            "count": int(df["requires_english"].sum()),
-            "definition": "Menciona ingles/english/fluente/intermediario/avancado.",
+            "sinal": "Exige ingles",
+            "taxa": df["requires_english"].mean(),
+            "quantidade": int(df["requires_english"].sum()),
+            "definicao": "Menciona ingles/english/fluente/intermediario/avancado.",
         },
         {
-            "signal": "Stack avancada",
-            "rate": df["has_advanced_stack"].mean(),
-            "count": int(df["has_advanced_stack"].sum()),
-            "definition": "Cita termos como cloud, k8s, arquitetura, microservicos, DDD ou system design.",
+            "sinal": "Stack avancada",
+            "taxa": df["has_advanced_stack"].mean(),
+            "quantidade": int(df["has_advanced_stack"].sum()),
+            "definicao": "Cita termos como cloud, k8s, arquitetura, microservicos, DDD ou system design.",
         },
         {
-            "signal": "Processo seletivo mais exigente",
-            "rate": df["has_hard_process"].mean(),
-            "count": int(df["has_hard_process"].sum()),
-            "definition": "Cita live coding, teste tecnico, case tecnico, pair programming ou multiplas etapas.",
+            "sinal": "Processo seletivo mais exigente",
+            "taxa": df["has_hard_process"].mean(),
+            "quantidade": int(df["has_hard_process"].sum()),
+            "definicao": "Cita live coding, teste tecnico, case tecnico, pair programming ou multiplas etapas.",
         },
         {
-            "signal": "Mismatch junior/pleno-senior",
-            "rate": df["senior_mismatch"].mean(),
-            "count": int(df["senior_mismatch"].sum()),
-            "definition": "A vaga foi classificada como junior, mas menciona termos de pleno/senior.",
+            "sinal": "Mismatch junior/pleno-senior",
+            "taxa": df["senior_mismatch"].mean(),
+            "quantidade": int(df["senior_mismatch"].sum()),
+            "definicao": "A vaga foi classificada como junior, mas menciona termos de pleno/senior.",
         },
     ]
     out = pd.DataFrame(rows)
-    out["rate"] = out["rate"].fillna(0.0)
-    out["count"] = out["count"].fillna(0).astype(int)
+    out["taxa"] = out["taxa"].fillna(0.0)
+    out["quantidade"] = out["quantidade"].fillna(0).astype(int)
     return out

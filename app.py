@@ -132,28 +132,28 @@ if raw.empty:
 analysis = featured.copy()
 funnel_rows: list[dict[str, float | str]] = []
 base_count = len(analysis)
-funnel_rows.append({"etapa": "Issues capturadas (sem PR)", "count": base_count})
+funnel_rows.append({"etapa": "Issues capturadas (sem PR)", "quantidade": base_count})
 
 if only_junior:
     analysis = analysis[analysis["is_junior"]]
-    funnel_rows.append({"etapa": "Apos filtro junior/trainee/estagio", "count": len(analysis)})
+    funnel_rows.append({"etapa": "Apos filtro junior/trainee/estagio", "quantidade": len(analysis)})
 else:
-    funnel_rows.append({"etapa": "Sem filtro de senioridade", "count": len(analysis)})
+    funnel_rows.append({"etapa": "Sem filtro de senioridade", "quantidade": len(analysis)})
 
 if only_portuguese:
     analysis = analysis[analysis["is_portuguese"]]
-    funnel_rows.append({"etapa": "Apos filtro de portugues", "count": len(analysis)})
+    funnel_rows.append({"etapa": "Apos filtro de portugues", "quantidade": len(analysis)})
 else:
-    funnel_rows.append({"etapa": "Sem filtro de idioma", "count": len(analysis)})
+    funnel_rows.append({"etapa": "Sem filtro de idioma", "quantidade": len(analysis)})
 
 analysis = analysis[analysis["text_norm"].str.len() > 30]
-funnel_rows.append({"etapa": "Texto minimo (> 30 caracteres)", "count": len(analysis)})
+funnel_rows.append({"etapa": "Texto minimo (> 30 caracteres)", "quantidade": len(analysis)})
 
 funnel_df = pd.DataFrame(funnel_rows)
-funnel_df["retencao_percent"] = (
-    (funnel_df["count"] / max(1, base_count)) * 100.0
+funnel_df["retencao_percentual"] = (
+    (funnel_df["quantidade"] / max(1, base_count)) * 100.0
 ).round(1)
-funnel_df["perda_acumulada"] = base_count - funnel_df["count"]
+funnel_df["perda_acumulada"] = base_count - funnel_df["quantidade"]
 
 if analysis.empty:
     st.warning(
@@ -161,7 +161,16 @@ if analysis.empty:
     )
     st.subheader("Funil da amostra")
     st.dataframe(funnel_df, use_container_width=True)
-    st.dataframe(featured[["issue_number", "title", "created_at", "is_junior", "is_portuguese"]].head(20))
+    empty_view = featured[["issue_number", "title", "created_at", "is_junior", "is_portuguese"]].rename(
+        columns={
+            "issue_number": "numero_issue",
+            "title": "titulo",
+            "created_at": "criado_em",
+            "is_junior": "eh_junior",
+            "is_portuguese": "eh_portugues",
+        }
+    )
+    st.dataframe(empty_view.head(20), use_container_width=True)
     st.stop()
 
 series = build_time_series(analysis)
@@ -195,8 +204,8 @@ with fcol2:
     fig_funnel = px.bar(
         funnel_df,
         x="etapa",
-        y="count",
-        text="count",
+        y="quantidade",
+        text="quantidade",
         title="Contagem por etapa do funil",
     )
     fig_funnel.update_layout(xaxis_title="", yaxis_title="vagas")
@@ -204,18 +213,28 @@ with fcol2:
 
 st.subheader("Evolucao temporal")
 if series.empty:
-    st.info("Sem dados suficientes para serie temporal.")
+    st.info(
+        "Sem dados suficientes para serie temporal apos remover o mes corrente (incompleto)."
+    )
 else:
+    st.caption("O mes corrente e removido automaticamente para evitar distorcao por periodo incompleto.")
     fig_trend = px.line(
         series,
-        x="period",
-        y="avg_difficulty",
+        x="periodo",
+        y="exigencia_media",
         markers=True,
-        title="Exigencia media por periodo",
+        title="Exigencia media por periodo (meses completos)",
     )
+    fig_trend.update_layout(xaxis_title="Periodo", yaxis_title="Indice medio de exigencia")
     st.plotly_chart(fig_trend, use_container_width=True)
 
-    fig_count = px.bar(series, x="period", y="n_jobs", title="Quantidade de vagas por periodo")
+    fig_count = px.bar(
+        series,
+        x="periodo",
+        y="quantidade_vagas",
+        title="Quantidade de vagas por periodo",
+    )
+    fig_count.update_layout(xaxis_title="Periodo", yaxis_title="Quantidade de vagas")
     st.plotly_chart(fig_count, use_container_width=True)
 
 st.subheader("Sinais de cobranca")
@@ -267,22 +286,22 @@ with col_a:
 
 with col_b:
     signal_df = hard_signal_overview(analysis)
-    signal_df["percent"] = (signal_df["rate"] * 100.0).round(1)
+    signal_df["percentual"] = (signal_df["taxa"] * 100.0).round(1)
     show_zero_signals = st.checkbox("Mostrar sinais com valor zero", value=False)
 
     if show_zero_signals:
         signal_plot_df = signal_df.copy()
     else:
-        signal_plot_df = signal_df[signal_df["count"] > 0].copy()
+        signal_plot_df = signal_df[signal_df["quantidade"] > 0].copy()
 
     if signal_plot_df.empty:
         st.info("Nenhum sinal com ocorrencia na amostra atual.")
     else:
         fig_signals = px.bar(
             signal_plot_df,
-            x="signal",
-            y="percent",
-            text="count",
+            x="sinal",
+            y="percentual",
+            text="quantidade",
             title="Percentual de vagas com sinais de cobranca",
         )
         fig_signals.update_layout(xaxis_title="", yaxis_title="% das vagas")
@@ -290,7 +309,7 @@ with col_b:
 
     st.caption("Definicoes dos sinais utilizados:")
     st.dataframe(
-        signal_df[["signal", "definition", "count", "percent"]],
+        signal_df[["sinal", "definicao", "quantidade", "percentual"]],
         use_container_width=True,
         hide_index=True,
     )
@@ -305,19 +324,33 @@ else:
             lambda values: ", ".join(values) if isinstance(values, list) else ""
         )
 
+    mismatch_df = mismatch_df.rename(
+        columns={
+            "issue_number": "numero_issue",
+            "title": "titulo",
+            "created_at": "criado_em",
+            "years_required": "anos_experiencia_exigidos",
+            "tech_count": "quantidade_tecnologias",
+            "requires_english": "exige_ingles",
+            "senior_terms_found": "termos_pleno_senior",
+            "advanced_terms_found": "termos_stack_avancada",
+            "process_terms_found": "termos_processo_exigente",
+        }
+    )
+
     st.caption(
         "Mismatch significa: vaga classificada como junior, mas com termos tipicos de pleno/senior no texto."
     )
     mismatch_cols = [
-        "issue_number",
-        "title",
-        "created_at",
-        "years_required",
-        "tech_count",
-        "requires_english",
-        "senior_terms_found",
-        "advanced_terms_found",
-        "process_terms_found",
+        "numero_issue",
+        "titulo",
+        "criado_em",
+        "anos_experiencia_exigidos",
+        "quantidade_tecnologias",
+        "exige_ingles",
+        "termos_pleno_senior",
+        "termos_stack_avancada",
+        "termos_processo_exigente",
     ]
     st.dataframe(
         mismatch_df[mismatch_cols].sort_values("created_at", ascending=False).head(50),
@@ -347,11 +380,16 @@ else:
         cluster_df, top_terms_df = cluster_payload
         fig_cluster = px.scatter(
             cluster_df,
-            x="x",
-            y="y",
-            color="cluster",
-            hover_data=["issue_number", "title", "difficulty_score"],
+            x="componente_1",
+            y="componente_2",
+            color="grupo",
+            hover_data=["numero_issue", "titulo", "indice_exigencia"],
             title="Clusters de texto (SVD 2D)",
+        )
+        fig_cluster.update_layout(
+            xaxis_title="Componente 1",
+            yaxis_title="Componente 2",
+            legend_title="Grupo",
         )
         st.plotly_chart(fig_cluster, use_container_width=True)
         st.caption(
@@ -382,24 +420,42 @@ for list_col in ["senior_terms_found", "advanced_terms_found", "process_terms_fo
         lambda values: ", ".join(values) if isinstance(values, list) else ""
     )
 
-preview_cols = [
-    "issue_number",
-    "title",
-    "created_at",
-    "difficulty_score",
-    "difficulty_class",
-    "years_required",
-    "tech_count",
-    "requires_english",
-    "has_advanced_stack",
-    "has_hard_process",
-    "senior_terms_found",
-    "advanced_terms_found",
-    "process_terms_found",
-]
-st.dataframe(preview_df[preview_cols].sort_values("created_at", ascending=False).head(50), use_container_width=True)
+preview_df = preview_df.rename(
+    columns={
+        "issue_number": "numero_issue",
+        "title": "titulo",
+        "created_at": "criado_em",
+        "difficulty_score": "indice_exigencia",
+        "difficulty_class": "classe_exigencia",
+        "years_required": "anos_experiencia_exigidos",
+        "tech_count": "quantidade_tecnologias",
+        "requires_english": "exige_ingles",
+        "has_advanced_stack": "stack_avancada",
+        "has_hard_process": "processo_seletivo_mais_exigente",
+        "senior_terms_found": "termos_pleno_senior",
+        "advanced_terms_found": "termos_stack_avancada",
+        "process_terms_found": "termos_processo_exigente",
+    }
+)
 
-csv_bytes = analysis.to_csv(index=False).encode("utf-8")
+preview_cols = [
+    "numero_issue",
+    "titulo",
+    "criado_em",
+    "indice_exigencia",
+    "classe_exigencia",
+    "anos_experiencia_exigidos",
+    "quantidade_tecnologias",
+    "exige_ingles",
+    "stack_avancada",
+    "processo_seletivo_mais_exigente",
+    "termos_pleno_senior",
+    "termos_stack_avancada",
+    "termos_processo_exigente",
+]
+st.dataframe(preview_df[preview_cols].sort_values("criado_em", ascending=False).head(50), use_container_width=True)
+
+csv_bytes = preview_df.to_csv(index=False).encode("utf-8")
 st.download_button(
     label="Baixar CSV da amostra analisada",
     data=csv_bytes,

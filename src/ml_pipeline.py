@@ -68,16 +68,20 @@ CUSTOM_STOPWORDS = {
 }
 
 
-def build_time_series(df: pd.DataFrame, freq: str = "M") -> pd.DataFrame:
+def build_time_series(
+    df: pd.DataFrame,
+    freq: str = "M",
+    drop_current_period: bool = True,
+) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(
             columns=[
-                "period",
-                "avg_difficulty",
-                "median_difficulty",
-                "n_jobs",
-                "hard_process_rate",
-                "english_rate",
+                "periodo",
+                "exigencia_media",
+                "exigencia_mediana",
+                "quantidade_vagas",
+                "taxa_processo_exigente",
+                "taxa_ingles",
             ]
         )
 
@@ -85,28 +89,32 @@ def build_time_series(df: pd.DataFrame, freq: str = "M") -> pd.DataFrame:
     if working.empty:
         return pd.DataFrame(
             columns=[
-                "period",
-                "avg_difficulty",
-                "median_difficulty",
-                "n_jobs",
-                "hard_process_rate",
-                "english_rate",
+                "periodo",
+                "exigencia_media",
+                "exigencia_mediana",
+                "quantidade_vagas",
+                "taxa_processo_exigente",
+                "taxa_ingles",
             ]
         )
 
-    working["period"] = working["created_at"].dt.to_period(freq).dt.to_timestamp()
+    working["periodo"] = working["created_at"].dt.to_period(freq).dt.to_timestamp()
 
     ts = (
-        working.groupby("period", as_index=False)
+        working.groupby("periodo", as_index=False)
         .agg(
-            avg_difficulty=("difficulty_score", "mean"),
-            median_difficulty=("difficulty_score", "median"),
-            n_jobs=("issue_id", "count"),
-            hard_process_rate=("has_hard_process", "mean"),
-            english_rate=("requires_english", "mean"),
+            exigencia_media=("difficulty_score", "mean"),
+            exigencia_mediana=("difficulty_score", "median"),
+            quantidade_vagas=("issue_id", "count"),
+            taxa_processo_exigente=("has_hard_process", "mean"),
+            taxa_ingles=("requires_english", "mean"),
         )
-        .sort_values("period")
+        .sort_values("periodo")
     )
+
+    if drop_current_period and not ts.empty:
+        current_period_start = pd.Timestamp.now(tz="UTC").to_period(freq).to_timestamp().tz_localize(None)
+        ts = ts[ts["periodo"] < current_period_start]
 
     return ts
 
@@ -121,7 +129,7 @@ def analyze_trend(ts_df: pd.DataFrame) -> Dict[str, float | str]:
         }
 
     x = np.arange(len(ts_df), dtype=float).reshape(-1, 1)
-    y = ts_df["avg_difficulty"].astype(float).values
+    y = ts_df["exigencia_media"].astype(float).values
 
     model = LinearRegression()
     model.fit(x, y)
@@ -178,9 +186,18 @@ def cluster_texts(
     coords = reducer.fit_transform(matrix)
 
     cluster_df = df[["issue_id", "issue_number", "title", "difficulty_score", "created_at", "url"]].copy()
-    cluster_df["cluster"] = labels.astype(str)
-    cluster_df["x"] = coords[:, 0]
-    cluster_df["y"] = coords[:, 1]
+    cluster_df = cluster_df.rename(
+        columns={
+            "issue_id": "id_issue",
+            "issue_number": "numero_issue",
+            "title": "titulo",
+            "difficulty_score": "indice_exigencia",
+            "created_at": "criado_em",
+        }
+    )
+    cluster_df["grupo"] = labels.astype(str)
+    cluster_df["componente_1"] = coords[:, 0]
+    cluster_df["componente_2"] = coords[:, 1]
 
     feature_names = np.array(vect.get_feature_names_out())
     top_rows = []
@@ -189,7 +206,7 @@ def cluster_texts(
         center = model.cluster_centers_[cluster_index]
         top_idx = np.argsort(center)[-10:][::-1]
         top_terms = [feature_names[i] for i in top_idx]
-        top_rows.append({"cluster": str(cluster_index), "top_terms": ", ".join(top_terms)})
+        top_rows.append({"grupo": str(cluster_index), "termos_principais": ", ".join(top_terms)})
 
     top_terms_df = pd.DataFrame(top_rows)
     return cluster_df, top_terms_df
@@ -220,9 +237,9 @@ def difficulty_terms(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
     rows = []
     for idx in pos_idx:
-        rows.append({"term": names[idx], "coef": float(coefs[idx]), "direction": "mais exigente"})
+        rows.append({"termo": names[idx], "peso": float(coefs[idx]), "direcao": "mais exigente"})
     for idx in neg_idx:
-        rows.append({"term": names[idx], "coef": float(coefs[idx]), "direction": "menos exigente"})
+        rows.append({"termo": names[idx], "peso": float(coefs[idx]), "direcao": "menos exigente"})
 
-    terms_df = pd.DataFrame(rows).sort_values("coef", ascending=False)
+    terms_df = pd.DataFrame(rows).sort_values("peso", ascending=False)
     return terms_df
