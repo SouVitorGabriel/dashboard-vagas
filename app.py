@@ -8,7 +8,14 @@ import streamlit as st
 
 from src.features import build_features, hard_signal_overview, tech_frequency
 from src.github_issues import GitHubFetchError, fetch_issues
-from src.ml_pipeline import analyze_trend, build_time_series, cluster_texts, difficulty_terms
+from src.ml_pipeline import (
+    MIN_CLUSTER_SAMPLE,
+    MIN_TERMS_SAMPLE,
+    analyze_trend,
+    build_time_series,
+    cluster_texts,
+    difficulty_terms,
+)
 
 st.set_page_config(page_title="PI4 - Vagas Junior", layout="wide")
 
@@ -21,9 +28,11 @@ st.sidebar.header("Parametros")
 owner = st.sidebar.text_input("Owner", value="backend-br")
 repo = st.sidebar.text_input("Repositorio", value="vagas")
 state = st.sidebar.selectbox("Estado das issues", options=["all", "open", "closed"], index=0)
-limit = st.sidebar.slider("Quantidade de issues", min_value=30, max_value=200, value=100, step=10)
+limit = st.sidebar.slider("Quantidade de issues", min_value=30, max_value=1000, value=200, step=10)
 only_junior = st.sidebar.checkbox("Filtrar somente junior/trainee/estagio", value=True)
 only_portuguese = st.sidebar.checkbox("Filtrar somente textos em portugues", value=True)
+cluster_count = st.sidebar.slider("Quantidade de clusters (ML)", min_value=2, max_value=6, value=3)
+st.sidebar.caption("Dica: para blocos de ML mais estaveis, use 300+ issues quando possivel.")
 
 refresh = st.sidebar.button("Atualizar coleta")
 if refresh:
@@ -81,17 +90,37 @@ if raw.empty:
     st.stop()
 
 analysis = featured.copy()
+funnel_rows: list[dict[str, float | str]] = []
+base_count = len(analysis)
+funnel_rows.append({"etapa": "Issues capturadas (sem PR)", "count": base_count})
+
 if only_junior:
     analysis = analysis[analysis["is_junior"]]
+    funnel_rows.append({"etapa": "Apos filtro junior/trainee/estagio", "count": len(analysis)})
+else:
+    funnel_rows.append({"etapa": "Sem filtro de senioridade", "count": len(analysis)})
+
 if only_portuguese:
     analysis = analysis[analysis["is_portuguese"]]
+    funnel_rows.append({"etapa": "Apos filtro de portugues", "count": len(analysis)})
+else:
+    funnel_rows.append({"etapa": "Sem filtro de idioma", "count": len(analysis)})
 
 analysis = analysis[analysis["text_norm"].str.len() > 30]
+funnel_rows.append({"etapa": "Texto minimo (> 30 caracteres)", "count": len(analysis)})
+
+funnel_df = pd.DataFrame(funnel_rows)
+funnel_df["retencao_percent"] = (
+    (funnel_df["count"] / max(1, base_count)) * 100.0
+).round(1)
+funnel_df["perda_acumulada"] = base_count - funnel_df["count"]
 
 if analysis.empty:
     st.warning(
         "Nao sobraram vagas apos os filtros. Desmarque algum filtro para visualizar dados e validar o pipeline."
     )
+    st.subheader("Funil da amostra")
+    st.dataframe(funnel_df, use_container_width=True)
     st.dataframe(featured[["issue_number", "title", "created_at", "is_junior", "is_portuguese"]].head(20))
     st.stop()
 
@@ -113,6 +142,26 @@ c6.metric("Tendencia da exigencia", trend["direction"])
 c7.metric("Inclinacao por periodo", f"{trend['slope']:.3f}")
 c8.metric("Variacao inicial-final", f"{trend['delta_pct']:.1f}%")
 
+st.subheader("Funil da amostra (por que 200 podem virar 18)")
+st.caption(
+    "A amostra final considera os filtros ativos (junior e portugues) e remove textos muito curtos. "
+    "Por isso o total analisado pode cair bastante."
+)
+
+fcol1, fcol2 = st.columns([1, 2])
+with fcol1:
+    st.dataframe(funnel_df, use_container_width=True)
+with fcol2:
+    fig_funnel = px.bar(
+        funnel_df,
+        x="etapa",
+        y="count",
+        text="count",
+        title="Contagem por etapa do funil",
+    )
+    fig_funnel.update_layout(xaxis_title="", yaxis_title="vagas")
+    st.plotly_chart(fig_funnel, use_container_width=True)
+
 st.subheader("Evolucao temporal")
 if series.empty:
     st.info("Sem dados suficientes para serie temporal.")
@@ -130,29 +179,110 @@ else:
     st.plotly_chart(fig_count, use_container_width=True)
 
 st.subheader("Sinais de cobranca")
+distribution_mode = st.radio(
+    "Como exibir a distribuicao do indice de exigencia:",
+    options=["Faixas de score", "Classes baixo/medio/alto"],
+    horizontal=True,
+)
+
 col_a, col_b = st.columns(2)
 
 with col_a:
-    fig_dist = px.histogram(
-        analysis,
-        x="difficulty_score",
-        color="difficulty_class",
-        nbins=10,
-        title="Distribuicao do indice de exigencia",
-    )
-    st.plotly_chart(fig_dist, use_container_width=True)
+    if distribution_mode == "Faixas de score":
+        max_score = max(6.0, float(analysis["difficulty_score"].max()))
+        upper_edge = int(max_score) + 2
+        bins = list(range(0, upper_edge))
+        binned = pd.cut(analysis["difficulty_score"], bins=bins, right=False, include_lowest=True)
+        dist_df = binned.value_counts(sort=False).reset_index()
+        dist_df.columns = ["faixa_score", "vagas"]
+        dist_df["faixa_score"] = dist_df["faixa_score"].astype(str)
+
+        fig_dist = px.bar(
+            dist_df,
+            x="faixa_score",
+            y="vagas",
+            title="Distribuicao do indice por faixas de score",
+        )
+        fig_dist.update_layout(xaxis_title="Faixa do score", yaxis_title="Quantidade de vagas")
+        st.plotly_chart(fig_dist, use_container_width=True)
+        st.caption("Cada barra representa quantas vagas cairam no intervalo de score mostrado no eixo X.")
+    else:
+        class_order = ["baixo", "medio", "alto"]
+        class_df = (
+            analysis["difficulty_class"]
+            .value_counts()
+            .reindex(class_order, fill_value=0)
+            .reset_index()
+        )
+        class_df.columns = ["classe", "vagas"]
+        fig_dist = px.bar(
+            class_df,
+            x="classe",
+            y="vagas",
+            title="Distribuicao por classe de exigencia",
+        )
+        fig_dist.update_layout(xaxis_title="Classe", yaxis_title="Quantidade de vagas")
+        st.plotly_chart(fig_dist, use_container_width=True)
+        st.caption("As classes seguem o score: baixo (0-2), medio (2.1-4.0), alto (>4.0).")
 
 with col_b:
     signal_df = hard_signal_overview(analysis)
-    signal_df["percent"] = signal_df["rate"] * 100.0
-    fig_signals = px.bar(
-        signal_df,
-        x="signal",
-        y="percent",
-        title="Percentual de vagas com sinais de cobranca",
+    signal_df["percent"] = (signal_df["rate"] * 100.0).round(1)
+    show_zero_signals = st.checkbox("Mostrar sinais com valor zero", value=False)
+
+    if show_zero_signals:
+        signal_plot_df = signal_df.copy()
+    else:
+        signal_plot_df = signal_df[signal_df["count"] > 0].copy()
+
+    if signal_plot_df.empty:
+        st.info("Nenhum sinal com ocorrencia na amostra atual.")
+    else:
+        fig_signals = px.bar(
+            signal_plot_df,
+            x="signal",
+            y="percent",
+            text="count",
+            title="Percentual de vagas com sinais de cobranca",
+        )
+        fig_signals.update_layout(xaxis_title="", yaxis_title="% das vagas")
+        st.plotly_chart(fig_signals, use_container_width=True)
+
+    st.caption("Definicoes dos sinais utilizados:")
+    st.dataframe(
+        signal_df[["signal", "definition", "count", "percent"]],
+        use_container_width=True,
+        hide_index=True,
     )
-    fig_signals.update_layout(xaxis_title="", yaxis_title="%")
-    st.plotly_chart(fig_signals, use_container_width=True)
+
+st.subheader("Detalhamento: mismatch junior/pleno-senior")
+mismatch_df = analysis[analysis["senior_mismatch"]].copy()
+if mismatch_df.empty:
+    st.info("Nenhum caso de mismatch foi encontrado com os filtros atuais.")
+else:
+    for list_col in ["senior_terms_found", "advanced_terms_found", "process_terms_found"]:
+        mismatch_df[list_col] = mismatch_df[list_col].map(
+            lambda values: ", ".join(values) if isinstance(values, list) else ""
+        )
+
+    st.caption(
+        "Mismatch significa: vaga classificada como junior, mas com termos tipicos de pleno/senior no texto."
+    )
+    mismatch_cols = [
+        "issue_number",
+        "title",
+        "created_at",
+        "years_required",
+        "tech_count",
+        "requires_english",
+        "senior_terms_found",
+        "advanced_terms_found",
+        "process_terms_found",
+    ]
+    st.dataframe(
+        mismatch_df[mismatch_cols].sort_values("created_at", ascending=False).head(50),
+        use_container_width=True,
+    )
 
 st.subheader("Tecnologias mais citadas")
 tech_df = tech_frequency(analysis).head(12)
@@ -163,30 +293,55 @@ else:
     st.plotly_chart(fig_tech, use_container_width=True)
 
 st.subheader("ML - Agrupamento de vagas por similaridade de texto")
-cluster_payload = cluster_texts(analysis, n_clusters=3)
-if cluster_payload is None:
-    st.info("Amostra pequena para clustering. Aumente o limite de issues.")
-else:
-    cluster_df, top_terms_df = cluster_payload
-    fig_cluster = px.scatter(
-        cluster_df,
-        x="x",
-        y="y",
-        color="cluster",
-        hover_data=["issue_number", "title", "difficulty_score"],
-        title="Clusters de texto (SVD 2D)",
+if len(analysis) < MIN_CLUSTER_SAMPLE:
+    missing = MIN_CLUSTER_SAMPLE - len(analysis)
+    st.info(
+        f"Volume insuficiente para clustering estavel. Minimo recomendado: {MIN_CLUSTER_SAMPLE}. "
+        f"Atual: {len(analysis)}. Faltam: {missing}."
     )
-    st.plotly_chart(fig_cluster, use_container_width=True)
-    st.dataframe(top_terms_df, use_container_width=True)
+else:
+    cluster_payload = cluster_texts(analysis, n_clusters=cluster_count)
+    if cluster_payload is None:
+        st.info("Nao foi possivel gerar clusters com qualidade. Tente aumentar a amostra.")
+    else:
+        cluster_df, top_terms_df = cluster_payload
+        fig_cluster = px.scatter(
+            cluster_df,
+            x="x",
+            y="y",
+            color="cluster",
+            hover_data=["issue_number", "title", "difficulty_score"],
+            title="Clusters de texto (SVD 2D)",
+        )
+        st.plotly_chart(fig_cluster, use_container_width=True)
+        st.caption(
+            "Top termos por cluster apos limpeza de URLs/ruido e stopwords comuns de anuncios de vaga."
+        )
+        st.dataframe(top_terms_df, use_container_width=True)
 
 st.subheader("ML - Termos associados a maior exigencia")
-terms_df = difficulty_terms(analysis)
-if terms_df is None:
-    st.info("Sem volume suficiente para estimar termos discriminantes.")
+if len(analysis) < MIN_TERMS_SAMPLE:
+    missing = MIN_TERMS_SAMPLE - len(analysis)
+    st.info(
+        f"Sem volume suficiente para termos discriminantes. Minimo: {MIN_TERMS_SAMPLE}. "
+        f"Atual: {len(analysis)}. Faltam: {missing}."
+    )
 else:
-    st.dataframe(terms_df, use_container_width=True)
+    terms_df = difficulty_terms(analysis)
+    if terms_df is None:
+        st.info(
+            "Nao foi possivel estimar termos discriminantes com estabilidade estatistica na amostra atual."
+        )
+    else:
+        st.dataframe(terms_df, use_container_width=True)
 
 st.subheader("Tabela de amostra para o relatorio")
+preview_df = analysis.copy()
+for list_col in ["senior_terms_found", "advanced_terms_found", "process_terms_found"]:
+    preview_df[list_col] = preview_df[list_col].map(
+        lambda values: ", ".join(values) if isinstance(values, list) else ""
+    )
+
 preview_cols = [
     "issue_number",
     "title",
@@ -198,8 +353,11 @@ preview_cols = [
     "requires_english",
     "has_advanced_stack",
     "has_hard_process",
+    "senior_terms_found",
+    "advanced_terms_found",
+    "process_terms_found",
 ]
-st.dataframe(analysis[preview_cols].sort_values("created_at", ascending=False).head(50), use_container_width=True)
+st.dataframe(preview_df[preview_cols].sort_values("created_at", ascending=False).head(50), use_container_width=True)
 
 csv_bytes = analysis.to_csv(index=False).encode("utf-8")
 st.download_button(

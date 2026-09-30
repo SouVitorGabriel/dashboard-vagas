@@ -9,6 +9,9 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 
+MIN_CLUSTER_SAMPLE = 18
+MIN_TERMS_SAMPLE = 30
+
 CUSTOM_STOPWORDS = {
     "de",
     "da",
@@ -36,6 +39,32 @@ CUSTOM_STOPWORDS = {
     "junior",
     "jr",
     "backend",
+    "empresa",
+    "descricao",
+    "requisitos",
+    "beneficios",
+    "remoto",
+    "hibrido",
+    "presencial",
+    "clt",
+    "pj",
+    "vaga",
+    "candidate",
+    "candidatura",
+    "informacoes",
+    "informacao",
+    "informar",
+    "labels",
+    "time",
+    "dias",
+    "anos",
+    "ano",
+    "brasil",
+    "paulo",
+    "sao",
+    "https",
+    "http",
+    "linkedin",
 }
 
 
@@ -123,6 +152,7 @@ def _vectorizer() -> TfidfVectorizer:
         min_df=2,
         max_df=0.9,
         ngram_range=(1, 2),
+        token_pattern=r"(?u)\b[a-z][a-z\+\#]{2,}\b",
         stop_words=list(CUSTOM_STOPWORDS),
     )
 
@@ -130,11 +160,12 @@ def _vectorizer() -> TfidfVectorizer:
 def cluster_texts(
     df: pd.DataFrame, n_clusters: int = 3
 ) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
-    if df.empty or len(df) < max(12, n_clusters * 3):
+    if df.empty or len(df) < max(MIN_CLUSTER_SAMPLE, n_clusters * 3):
         return None
 
     vect = _vectorizer()
-    matrix = vect.fit_transform(df["text_norm"].fillna(""))
+    text_col = "text_ml" if "text_ml" in df.columns else "text_norm"
+    matrix = vect.fit_transform(df[text_col].fillna(""))
 
     if matrix.shape[1] < 2:
         return None
@@ -165,7 +196,7 @@ def cluster_texts(
 
 
 def difficulty_terms(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    if df.empty or len(df) < 30:
+    if df.empty or len(df) < MIN_TERMS_SAMPLE:
         return None
 
     target = (df["difficulty_score"] >= df["difficulty_score"].median()).astype(int)
@@ -173,7 +204,8 @@ def difficulty_terms(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         return None
 
     vect = _vectorizer()
-    matrix = vect.fit_transform(df["text_norm"].fillna(""))
+    text_col = "text_ml" if "text_ml" in df.columns else "text_norm"
+    matrix = vect.fit_transform(df[text_col].fillna(""))
     if matrix.shape[1] < 5:
         return None
 

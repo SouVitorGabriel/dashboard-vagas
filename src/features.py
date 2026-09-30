@@ -89,6 +89,26 @@ YEARS_PATTERN = re.compile(
 )
 
 
+def extract_matching_terms(text: str, terms: Sequence[str]) -> list[str]:
+    matches: list[str] = []
+    for term in terms:
+        if term in text:
+            matches.append(term)
+    return sorted(set(matches))
+
+
+def clean_text_for_ml(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    cleaned = re.sub(r"`[^`]*`", " ", cleaned)
+    cleaned = re.sub(r"[^a-z\+\#\s]", " ", cleaned)
+    cleaned = re.sub(r"\b\d+\b", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def strip_accents(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     return "".join(char for char in normalized if not unicodedata.combining(char))
@@ -168,6 +188,7 @@ def build_features(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     df["text"] = (df["title"] + "\n" + df["body"]).astype(str)
     df["text_norm"] = df["text"].map(normalize_text)
+    df["text_ml"] = df["text_norm"].map(clean_text_for_ml)
     df["labels_norm"] = df["labels"].apply(lambda value: [normalize_text(str(item)) for item in value])
 
     df["is_junior"] = df.apply(
@@ -181,15 +202,20 @@ def build_features(raw_df: pd.DataFrame) -> pd.DataFrame:
     df["tech_count"] = df["tech_list"].map(len)
 
     df["requires_english"] = df["text_norm"].map(lambda text: has_any_term(text, ENGLISH_TERMS))
-    df["has_advanced_stack"] = df["text_norm"].map(
-        lambda text: has_any_term(text, ADVANCED_TERMS)
+
+    df["advanced_terms_found"] = df["text_norm"].map(
+        lambda text: extract_matching_terms(text, ADVANCED_TERMS)
     )
-    df["has_hard_process"] = df["text_norm"].map(
-        lambda text: has_any_term(text, PROCESS_HARD_TERMS)
+    df["process_terms_found"] = df["text_norm"].map(
+        lambda text: extract_matching_terms(text, PROCESS_HARD_TERMS)
     )
-    df["mentions_senior_terms"] = df["text_norm"].map(
-        lambda text: has_any_term(text, SENIOR_TERMS)
+    df["senior_terms_found"] = df["text_norm"].map(
+        lambda text: extract_matching_terms(text, SENIOR_TERMS)
     )
+
+    df["has_advanced_stack"] = df["advanced_terms_found"].map(lambda value: len(value) > 0)
+    df["has_hard_process"] = df["process_terms_found"].map(lambda value: len(value) > 0)
+    df["mentions_senior_terms"] = df["senior_terms_found"].map(lambda value: len(value) > 0)
     df["senior_mismatch"] = df["is_junior"] & df["mentions_senior_terms"]
 
     df["difficulty_score"] = (
@@ -223,14 +249,35 @@ def tech_frequency(df: pd.DataFrame) -> pd.DataFrame:
 
 def hard_signal_overview(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["signal", "rate"])
+        return pd.DataFrame(columns=["signal", "rate", "count", "definition"])
 
     rows = [
-        ("Exige ingles", df["requires_english"].mean()),
-        ("Stack avancada", df["has_advanced_stack"].mean()),
-        ("Processo seletivo mais exigente", df["has_hard_process"].mean()),
-        ("Mismatch junior/pleno-senior", df["senior_mismatch"].mean()),
+        {
+            "signal": "Exige ingles",
+            "rate": df["requires_english"].mean(),
+            "count": int(df["requires_english"].sum()),
+            "definition": "Menciona ingles/english/fluente/intermediario/avancado.",
+        },
+        {
+            "signal": "Stack avancada",
+            "rate": df["has_advanced_stack"].mean(),
+            "count": int(df["has_advanced_stack"].sum()),
+            "definition": "Cita termos como cloud, k8s, arquitetura, microservicos, DDD ou system design.",
+        },
+        {
+            "signal": "Processo seletivo mais exigente",
+            "rate": df["has_hard_process"].mean(),
+            "count": int(df["has_hard_process"].sum()),
+            "definition": "Cita live coding, teste tecnico, case tecnico, pair programming ou multiplas etapas.",
+        },
+        {
+            "signal": "Mismatch junior/pleno-senior",
+            "rate": df["senior_mismatch"].mean(),
+            "count": int(df["senior_mismatch"].sum()),
+            "definition": "A vaga foi classificada como junior, mas menciona termos de pleno/senior.",
+        },
     ]
-    out = pd.DataFrame(rows, columns=["signal", "rate"])
+    out = pd.DataFrame(rows)
     out["rate"] = out["rate"].fillna(0.0)
+    out["count"] = out["count"].fillna(0).astype(int)
     return out
