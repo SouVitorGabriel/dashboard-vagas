@@ -39,6 +39,29 @@ if refresh:
     st.cache_data.clear()
 
 
+def render_loading_placeholders() -> None:
+    st.subheader("Carregando dashboard")
+    st.caption(
+        "A aplicacao esta coletando issues no GitHub e processando os sinais iniciais. "
+        "Isso pode levar alguns segundos."
+    )
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Issues capturadas", "...")
+    m2.metric("Taxa de vagas junior", "...")
+    m3.metric("Taxa de portugues", "...")
+    m4.metric("Amostra analisada", "...")
+    m5.metric("Exigencia media", "...")
+
+    p1, p2 = st.columns(2)
+    with p1:
+        st.info("Preparando graficos de evolucao temporal...")
+        st.info("Preparando distribuicao do indice de exigencia...")
+    with p2:
+        st.info("Preparando sinais de cobranca e tabelas...")
+        st.info("Preparando blocos de ML...")
+
+
 def _resolve_token() -> str | None:
     secret_token = None
     try:
@@ -79,11 +102,28 @@ if token:
 else:
     st.sidebar.warning("Sem token. Limite de API menor (60 requests/hora).")
 
+loading_placeholder = st.empty()
+status_placeholder = st.empty()
+
+with loading_placeholder.container():
+    render_loading_placeholders()
+
 try:
-    raw, featured = load_dataset(owner, repo, state, limit, token)
+    with status_placeholder.container():
+        with st.status("Carregando dados para analise...", expanded=True) as status:
+            status.write("1/3 - Conectando na API do GitHub")
+            status.write("2/3 - Baixando issues e removendo pull requests")
+            status.write("3/3 - Processando features e preparando amostra")
+            raw, featured = load_dataset(owner, repo, state, limit, token)
+            status.update(label="Dados carregados com sucesso", state="complete")
 except GitHubFetchError as exc:
+    loading_placeholder.empty()
+    status_placeholder.empty()
     st.error(f"Falha na coleta: {exc}")
     st.stop()
+
+loading_placeholder.empty()
+status_placeholder.empty()
 
 if raw.empty:
     st.warning("Nenhuma issue encontrada para os parametros informados.")
