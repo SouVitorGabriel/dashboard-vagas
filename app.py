@@ -115,17 +115,16 @@ try:
             status.write("2/3 - Baixando issues e removendo pull requests")
             status.write("3/3 - Processando features e preparando amostra")
             raw, featured = load_dataset(owner, repo, state, limit, token)
-            status.update(label="Dados carregados com sucesso", state="complete")
+            status.update(label="Dados carregados. Montando visualizacoes...", state="running")
 except GitHubFetchError as exc:
     loading_placeholder.empty()
     status_placeholder.empty()
     st.error(f"Falha na coleta: {exc}")
     st.stop()
 
-loading_placeholder.empty()
-status_placeholder.empty()
-
 if raw.empty:
+    loading_placeholder.empty()
+    status_placeholder.empty()
     st.warning("Nenhuma issue encontrada para os parametros informados.")
     st.stop()
 
@@ -156,6 +155,8 @@ funnel_df["retencao_percentual"] = (
 funnel_df["perda_acumulada"] = base_count - funnel_df["quantidade"]
 
 if analysis.empty:
+    loading_placeholder.empty()
+    status_placeholder.empty()
     st.warning(
         "Nao sobraram vagas apos os filtros. Desmarque algum filtro para visualizar dados e validar o pipeline."
     )
@@ -353,7 +354,7 @@ else:
         "termos_processo_exigente",
     ]
     st.dataframe(
-        mismatch_df[mismatch_cols].sort_values("created_at", ascending=False).head(50),
+        mismatch_df[mismatch_cols].sort_values("criado_em", ascending=False).head(50),
         use_container_width=True,
     )
 
@@ -462,3 +463,6 @@ st.download_button(
     file_name=f"{owner}_{repo}_sample_features.csv",
     mime="text/csv",
 )
+
+loading_placeholder.empty()
+status_placeholder.empty()
